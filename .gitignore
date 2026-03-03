@@ -1,0 +1,24 @@
+# Environments
+backend/.env
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+
+# Builds
+frontend/dist/
+host_builder/build/
+host_builder/dist/
+*.exe
+*.spec
+
+# OS Files
+.DS_Store
+Thumbs.db
+backend/.env
+.env
+node_modules/
+__pycache__/
