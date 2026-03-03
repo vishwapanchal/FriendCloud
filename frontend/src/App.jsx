@@ -6,9 +6,10 @@ function App() {
   const [image, setImage] = useState('ubuntu');
   const [ram, setRam] = useState('512m');
   const [cpu, setCpu] = useState('1');
+  const [useGpu, setUseGpu] = useState(false);
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('Offline');
-  const [output, setOutput] = useState('> System Ready.\n> Waiting for connection...');
+  const [output, setOutput] = useState('> System Ready.\n> Waiting for secure connection...');
   const [instanceId, setInstanceId] = useState('');
   const [token, setToken] = useState(localStorage.getItem('fc_token') || '');
   const [userEmail, setUserEmail] = useState(localStorage.getItem('fc_email') || '');
@@ -47,7 +48,7 @@ function App() {
       setIsConnecting(true);
       const decoded = atob(secretCode.trim());
       const [url, passkey] = decoded.split('|');
-      if (!url || !passkey || !url.startsWith('http')) throw new Error("Invalid Format");
+      if (!url || !passkey || !url.startsWith('http')) throw new Error("Invalid format detected.");
 
       const sysResponse = await fetch(`${url}/sysinfo`, {
         method: 'POST',
@@ -55,14 +56,14 @@ function App() {
         body: JSON.stringify({ passkey })
       });
 
-      if (!sysResponse.ok) throw new Error("Host denied connection.");
+      if (!sysResponse.ok) throw new Error("Host unavailable or rejected connection.");
       const sysData = await sysResponse.json();
 
       setHostUrl(url);
       setHostPasskey(passkey);
       setHostInfo(sysData);
       setAppMode('dashboard');
-      logToConsole(`> Connected to ${sysData.node}`);
+      logToConsole(`> Established P2P connection to ${sysData.node}`);
     } catch (e) {
       alert("Connection Failed: " + e.message);
     } finally {
@@ -74,23 +75,26 @@ function App() {
     setStatus('Launching');
     const newInstanceId = Math.random().toString(36).substring(2, 10);
     setInstanceId(newInstanceId);
-    logToConsole(`> Booting ${image}...`);
+    logToConsole(`> Initializing ${image} environment...`);
     try {
       const response = await fetch(`${hostUrl}/launch`, {
         method: 'POST',
         headers: API_HEADERS,
-        body: JSON.stringify({ image, ram, cpu, passkey: hostPasskey, instance_id: newInstanceId })
+        body: JSON.stringify({ image, ram, cpu, use_gpu: useGpu, passkey: hostPasskey, instance_id: newInstanceId })
       });
       const data = await response.json();
       if (!response.ok) { setStatus('Error'); logToConsole(`> ${data.detail}`); return; }
       setStatus('Online');
       logToConsole(`> ${data.message}`);
-    } catch (error) { setStatus('Error'); logToConsole(`> Remote Host offline.`); }
+    } catch (error) {
+      setStatus('Error');
+      logToConsole(`> Fatal: Remote Host offline.`);
+    }
   };
 
   const handleExecute = async () => {
     if (!command.trim() || status !== 'Online') return;
-    logToConsole(`> Executing...`);
+    logToConsole(`> Executing payload...`);
     try {
       const response = await fetch(`${hostUrl}/execute`, {
         method: 'POST',
@@ -100,7 +104,9 @@ function App() {
       const data = await response.json();
       if (!response.ok) { logToConsole(`> ${data.detail}`); return; }
       logToConsole(`${data.output}`);
-    } catch (error) { logToConsole(`> Connection lost.`); }
+    } catch (error) {
+      logToConsole(`> Fatal: Connection lost during execution.`);
+    }
   };
 
   const handleTerminate = async () => {
@@ -115,31 +121,80 @@ function App() {
       if (!response.ok) { setStatus('Error'); logToConsole(`> ${data.detail}`); return; }
       setStatus('Offline');
       setInstanceId('');
-      logToConsole(`> Terminated.`);
-    } catch (error) { setStatus('Error'); logToConsole(`> Host unreachable.`); }
+      logToConsole(`> Environment destroyed successfully.`);
+    } catch (error) {
+      setStatus('Error');
+      logToConsole(`> Fatal: Host unreachable.`);
+    }
   };
 
   const AppHeader = ({ subtitle }) => (
     <div className="header">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <button className="btn" style={{ padding: '8px', background: 'transparent' }} onClick={() => setAppMode('select')}>üè†</button>
-        <h1>FriendCloud <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{subtitle}</span></h1>
+      <div className="header-left">
+        <button className="btn btn-icon" onClick={() => setAppMode('select')}>Ìø†</button>
+        <h1>FriendCloud <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '8px' }}>{subtitle}</span></h1>
       </div>
-      <div className="header-controls" style={{ display: 'flex', gap: '8px' }}>
-        <button className="btn" style={{ padding: '8px' }} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? '‚òÄÔ∏è' : 'üåô'}</button>
-        <button className="btn btn-danger" style={{ padding: '8px 16px' }} onClick={() => { localStorage.clear(); window.location.reload(); }}>Exit</button>
+      <div className="header-right">
+        <span style={{ fontSize: '0.85rem', fontWeight: '600', marginRight: '8px' }}>{userEmail.split('@')[0]}</span>
+        <button className="btn btn-icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+          {theme === 'dark' ? '‚òÄÔ∏è' : 'Ìºô'}
+        </button>
+        <button className="btn btn-danger" style={{ padding: '8px 16px' }} onClick={() => { localStorage.clear(); window.location.reload(); }}>
+          Logout
+        </button>
       </div>
     </div>
   );
 
+  const getRamOptions = () => {
+    const hierarchy = ["512m", "1g", "2g", "4g", "8g", "16g", "32g", "64g"];
+    const maxLimit = hostInfo?.allowed_ram || "512m";
+    const maxIndex = hierarchy.indexOf(maxLimit) !== -1 ? hierarchy.indexOf(maxLimit) : 0;
+    return hierarchy.slice(0, maxIndex + 1);
+  };
+
+  const getCpuOptions = () => {
+    const maxLimit = parseInt(hostInfo?.allowed_cpu || "1");
+    return Array.from({ length: maxLimit }, (_, i) => (i + 1).toString());
+  };
+
   if (!token) {
     return (
-      <div className="page-wrapper" style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div className="app-container" style={{ padding: '60px 24px', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '2.5rem', marginBottom: '16px' }}>FriendCloud</h1>
-          <p style={{ color: 'var(--text-muted)', marginBottom: '40px' }}>Secure P2P compute.</p>
-          <button className="btn btn-primary" onClick={() => window.location.href='/auth/google/login'}>Sign in</button>
-        </div>
+      <div className="landing-wrapper">
+        <nav className="landing-nav">
+          <h2>‚òÅÔ∏è FriendCloud</h2>
+          <button className="btn btn-primary" style={{ padding: '12px 28px', borderRadius: '50px' }} onClick={() => window.location.href='/auth/google/login'}>Sign In</button>
+        </nav>
+        
+        <main className="landing-main">
+          <h1 className="hero-title">Decentralized P2P Compute.</h1>
+          <p className="hero-subtitle">
+            Bypass NAT, share GPU and CPU resources, and execute isolated Docker containers natively on peer hardware. Zero network configuration required.
+          </p>
+          <div className="hero-cta">
+            <button onClick={() => window.location.href='/auth/google/login'}>
+              Deploy Environment &rarr;
+            </button>
+          </div>
+
+          <div className="about-card">
+            <h3 style={{ fontSize: '1.8rem', marginBottom: '16px', color: '#3b82f6', fontWeight: '800' }}>Meet the Architect</h3>
+            <p style={{ fontSize: '1.15rem', marginBottom: '16px', lineHeight: '1.7', color: '#f8fafc' }}>
+              Hi, I am <strong>Vishwa Panchal</strong>. I am an Information Science specialist with a deep focus on DevOps, cloud infrastructure, Docker orchestration, and Kubernetes.
+            </p>
+            <p style={{ fontSize: '1.1rem', color: '#94a3b8', marginBottom: '40px', lineHeight: '1.7' }}>
+              I engineered FriendCloud to solve the real-world friction of NAT-traversal and the high costs associated with cloud hardware. By utilizing reverse SSH tunneling and dynamic resource limitation, this platform enables seamless, zero-trust peer-to-peer compute sharing.
+            </p>
+            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+              <a href="https://github.com/vishwapanchal" target="_blank" rel="noreferrer" className="social-btn">
+                <span style={{ fontSize: '1.3rem' }}>Ì∞ô</span> GitHub
+              </a>
+              <a href="https://linkedin.com/in/thevishwapanchal" target="_blank" rel="noreferrer" className="social-btn">
+                <span style={{ fontSize: '1.3rem', color: '#60a5fa' }}>Ì≤º</span> LinkedIn
+              </a>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -151,86 +206,158 @@ function App() {
           <>
             <AppHeader subtitle="Dashboard" />
             <div className="body-content">
-              <div className="role-grid">
-                <div className="role-card" onClick={() => setAppMode('host')}>
-                  <div style={{ fontSize: '3rem', marginBottom: '16px' }}>üñ•Ô∏è</div>
-                  <h2>Be a Host</h2>
+              <div className="dashboard-wrapper">
+                <div className="dashboard-header">
+                  <h1 className="dashboard-greeting">Welcome, <span className="highlight-text">{userEmail.split('@')[0]}</span></h1>
+                  <p className="dashboard-sub">Select your operational mode for this session.</p>
                 </div>
-                <div className="role-card" onClick={() => setAppMode('rent')}>
-                  <div style={{ fontSize: '3rem', marginBottom: '16px' }}>üöÄ</div>
-                  <h2>Rent Compute</h2>
+                
+                <div className="role-grid-modern">
+                  <div className="role-card-modern host-card" onClick={() => setAppMode('host')}>
+                    <div className="card-icon-wrapper">
+                      <span className="card-icon">Ì∂•Ô∏è</span>
+                    </div>
+                    <h2>Provision Node</h2>
+                    <p>Allocate your local hardware resources to the FriendCloud network.</p>
+                    <ul className="card-features">
+                      <li>Complete Docker isolation</li>
+                      <li>Hardware-level limits</li>
+                      <li>Ephemeral symmetric keys</li>
+                    </ul>
+                    <div className="card-action">Initialize Host &rarr;</div>
+                  </div>
+                  
+                  <div className="role-card-modern rent-card" onClick={() => setAppMode('rent')}>
+                    <div className="card-icon-wrapper">
+                      <span className="card-icon">Ì∫Ä</span>
+                    </div>
+                    <h2>Access Compute</h2>
+                    <p>Connect to a peer node using a secure symmetric authorization key.</p>
+                    <ul className="card-features">
+                      <li>Ephemeral environments</li>
+                      <li>Hardware GPU acceleration</li>
+                      <li>Zero NAT configuration</li>
+                    </ul>
+                    <div className="card-action">Connect Remote &rarr;</div>
+                  </div>
                 </div>
               </div>
             </div>
           </>
         ) : appMode === 'host' ? (
           <>
-            <AppHeader subtitle="Host Setup" />
+            <AppHeader subtitle="Agent Setup" />
             <div className="body-content">
-              <h2>Host Instructions</h2>
+              <div className="section-title">Deployment Steps</div>
               <div className="form-grid">
-                <div className="role-card" style={{ cursor: 'default' }}>
-                  <p>Download the agent executable.</p>
-                  <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={() => window.open('/download-agent', '_blank')}>Download</button>
+                <div className="role-card" style={{ cursor: 'default', alignItems: 'flex-start', textAlign: 'left', padding: '24px' }}>
+                  <strong style={{ marginBottom: '8px' }}>1. Retrieve Binary</strong>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '16px' }}>Acquire the standalone GUI agent.</p>
+                  <button className="btn btn-primary" onClick={() => window.open('/download-agent', '_blank')}>Download Agent</button>
+                </div>
+                <div className="role-card" style={{ cursor: 'default', alignItems: 'flex-start', textAlign: 'left', padding: '24px' }}>
+                  <strong style={{ marginBottom: '8px' }}>2. Initialize Protocol</strong>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Execute the binary and copy the generated symmetric tunnel key.</p>
                 </div>
               </div>
             </div>
           </>
         ) : appMode === 'rent' ? (
           <>
-            <AppHeader subtitle="Connect" />
-            <div className="body-content" style={{ textAlign: 'center' }}>
-              <input className="input-field" type="password" placeholder="Secret Code..." value={secretCode} onChange={(e) => setSecretCode(e.target.value)} style={{ marginBottom: '20px', textAlign: 'center' }}/>
-              <button className="btn btn-primary" onClick={connectToHost} disabled={!secretCode.trim() || isConnecting}>
-                {isConnecting ? "Connecting..." : "Establish Link"}
-              </button>
+            <AppHeader subtitle="Establish Link" />
+            <div className="body-content" style={{ alignItems: 'center' }}>
+              <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div className="section-title" style={{ justifyContent: 'center' }}>Symmetric Key Exchange</div>
+                <input 
+                  className="input-field" 
+                  type="password" 
+                  placeholder="Insert authorization string..." 
+                  value={secretCode} 
+                  onChange={(e) => setSecretCode(e.target.value)} 
+                  style={{ textAlign: 'center', letterSpacing: '1px' }}
+                />
+                <button className="btn btn-primary" onClick={connectToHost} disabled={!secretCode.trim() || isConnecting}>
+                  {isConnecting ? "Negotiating Handshake..." : "Initialize Connection"}
+                </button>
+              </div>
             </div>
           </>
         ) : (
           <>
-            <AppHeader subtitle="Terminal" />
+            <AppHeader subtitle="Active Session" />
             <div className="body-content">
               {hostInfo && (
                 <div className="host-specs-grid">
-                  <div className="spec-item"><span className="spec-label">Node</span><span className="spec-value">{hostInfo.node}</span></div>
-                  <div className="spec-item"><span className="spec-label">OS</span><span className="spec-value">{hostInfo.os}</span></div>
-                  <div className="spec-item"><span className="spec-label">CPU</span><span className="spec-value">{hostInfo.cpu_name}</span></div>
-                  <div className="spec-item"><span className="spec-label">RAM</span><span className="spec-value">{hostInfo.ram}</span></div>
+                  <div className="spec-item"><span className="spec-label">Target ID</span><span className="spec-value">{hostInfo.node}</span></div>
+                  <div className="spec-item"><span className="spec-label">Platform</span><span className="spec-value">{hostInfo.os}</span></div>
+                  <div className="spec-item"><span className="spec-label">Processor</span><span className="spec-value">{hostInfo.cpu_name}</span></div>
+                  <div className="spec-item"><span className="spec-label">Memory</span><span className="spec-value">{hostInfo.ram}</span></div>
                 </div>
               )}
-              <div className="section">
-                <div className="section-title">Environment</div>
+              
+              <div>
+                <div className="section-title">Container Specification</div>
                 <div className="form-grid">
                   <select className="input-field" value={image} onChange={(e) => setImage(e.target.value)} disabled={status !== 'Offline'}>
-                    <option value="ubuntu">Ubuntu</option>
-                    <option value="python:3.9-slim">Python 3.9</option>
-                    <option value="node:18-alpine">Node.js 18</option>
+                    <option value="ubuntu">Ubuntu RootFS</option>
+                    <option value="python:3.9-slim">Python 3.9 Daemon</option>
+                    <option value="node:18-alpine">Node.js 18 Engine</option>
                   </select>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <select className="input-field" value={ram} onChange={(e) => setRam(e.target.value)} disabled={status !== 'Offline'}>
-                      <option value="512m">512 MB</option><option value="1g">1 GB</option><option value="2g">2 GB</option>
+                      {getRamOptions().map(r => <option key={r} value={r}>{r.toUpperCase()}</option>)}
                     </select>
                     <select className="input-field" value={cpu} onChange={(e) => setCpu(e.target.value)} disabled={status !== 'Offline'}>
-                      <option value="1">1 Core</option><option value="2">2 Cores</option>
+                      {getCpuOptions().map(c => <option key={c} value={c}>{c} vCPU</option>)}
                     </select>
                   </div>
                 </div>
-                <div className="controls-row" style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px' }}>
-                  <div className="status-indicator"><div className={`status-dot ${status.toLowerCase()}`}></div>{status}</div>
-                  <div className="btn-group" style={{ flexDirection: 'row' }}>
+
+                {hostInfo?.has_gpu && hostInfo?.allowed_gpu && (
+                  <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid var(--success)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>‚ö° NVIDIA GPU Available</span>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{hostInfo.gpu_name}</div>
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={useGpu} onChange={(e) => setUseGpu(e.target.checked)} disabled={status !== 'Offline'} style={{ width: '18px', height: '18px' }} />
+                      <span style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Attach to Container</span>
+                    </label>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px' }}>
+                  <div className="status-indicator">
+                    <div className={`status-dot ${status.toLowerCase()}`}></div>
+                    {status}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
                     <button className="btn btn-primary" onClick={handleLaunch} disabled={status !== 'Offline'}>Deploy</button>
                     <button className="btn btn-danger" onClick={handleTerminate} disabled={status !== 'Online'}>Destroy</button>
                   </div>
                 </div>
               </div>
-              <div className="section">
-                <div className="section-title">Payload</div>
-                <textarea className="input-field" placeholder="ls -la" value={command} onChange={(e)=>setCommand(e.target.value)} disabled={status!=='Online'} style={{ height: '80px', marginBottom: '16px' }} />
-                <button className="btn btn-primary" onClick={handleExecute} disabled={status!=='Online'||!command.trim()}>Execute</button>
+
+              <div>
+                <div className="section-title">Command Interface</div>
+                <textarea 
+                  className="input-field" 
+                  placeholder=">_" 
+                  value={command} 
+                  onChange={(e) => setCommand(e.target.value)} 
+                  disabled={status !== 'Online'} 
+                  style={{ height: '80px', marginBottom: '16px', fontFamily: 'var(--font-mono)' }} 
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-primary" onClick={handleExecute} disabled={status !== 'Online' || !command.trim()}>Execute</button>
+                </div>
               </div>
+
               <div className="terminal-container">
                 <div className="terminal-header">
-                  <div className="term-dot red"></div><div className="term-dot yellow"></div><div className="term-dot green"></div>
+                  <div className="term-dot red"></div>
+                  <div className="term-dot yellow"></div>
+                  <div className="term-dot green"></div>
                 </div>
                 <pre className="terminal-output">{output}</pre>
               </div>
@@ -239,7 +366,7 @@ function App() {
         )}
       </div>
       <footer className="app-footer">
-        <p>¬© 2026 FriendCloud Network ‚Ä¢ Engineered by Vishwa Panchal</p>
+        FriendCloud Protocol ‚Ä¢ Vishwa Panchal
       </footer>
     </div>
   );
