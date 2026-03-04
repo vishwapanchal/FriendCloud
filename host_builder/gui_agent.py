@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import time
 
 try:
     import psutil
@@ -27,6 +28,8 @@ HOST_MAX_RAM = "1g"
 HOST_MAX_CPU = "1"
 HOST_ALLOW_GPU = False
 
+CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
+
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -46,11 +49,11 @@ class TaskReq(BaseModel):
 async def get_sysinfo(req: AuthReq):
     if req.passkey != PASSKEY: raise HTTPException(status_code=401)
     try:
-        dkr = subprocess.run(["docker", "--version"], capture_output=True, text=True).stdout.strip()
+        dkr = subprocess.run(["docker", "--version"], capture_output=True, text=True, creationflags=CREATE_NO_WINDOW).stdout.strip()
     except: dkr = "N/A"
     
     try:
-        gpu_info = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, check=True).stdout.strip()
+        gpu_info = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, check=True, creationflags=CREATE_NO_WINDOW).stdout.strip()
         has_gpu = True
     except:
         gpu_info = "None"
@@ -85,14 +88,14 @@ async def launch(req: TaskReq):
         raise HTTPException(status_code=403, detail="Host has not authorized GPU access.")
 
     cname = f"fc-{req.instance_id}"
-    subprocess.run(["docker", "rm", "-f", cname], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", cname], capture_output=True, creationflags=CREATE_NO_WINDOW)
     
     cmd = ["docker", "run", "-d", "--name", cname, "--memory", req.ram, "--cpus", req.cpu, "--network", "none"]
     if req.use_gpu and HOST_ALLOW_GPU:
         cmd.extend(["--gpus", "all"])
     cmd.extend([req.image, "tail", "-f", "/dev/null"])
     
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
     if proc.returncode != 0: raise HTTPException(status_code=500, detail=proc.stderr)
     return {"message": "Environment ready."}
 
@@ -100,14 +103,19 @@ async def launch(req: TaskReq):
 async def execute(req: TaskReq):
     if req.passkey != PASSKEY: raise HTTPException(status_code=401)
     entry = ["python", "-c", req.command] if "python" in req.image else (["node", "-e", req.command] if "node" in req.image else ["sh", "-c", req.command])
-    proc = subprocess.run(["docker", "exec", f"fc-{req.instance_id}"] + entry, capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["docker", "exec", f"fc-{req.instance_id}"] + entry, capture_output=True, text=True, timeout=30, creationflags=CREATE_NO_WINDOW)
     return {"output": proc.stdout + proc.stderr}
 
 @app.post("/terminate")
 async def terminate(req: TaskReq):
     if req.passkey != PASSKEY: raise HTTPException(status_code=401)
-    subprocess.run(["docker", "rm", "-f", f"fc-{req.instance_id}"], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", f"fc-{req.instance_id}"], capture_output=True, creationflags=CREATE_NO_WINDOW)
     return {"message": "Destroyed."}
+
+def start_api_server():
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+
+threading.Thread(target=start_api_server, daemon=True).start()
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -119,7 +127,7 @@ class ProAgent(ctk.CTk):
         self.geometry("550x450")
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
+        self.ssh_process = None
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.pack(fill="both", expand=True, padx=40, pady=40)
         self.show_welcome()
@@ -157,7 +165,7 @@ class ProAgent(ctk.CTk):
     def run_checks(self):
         self.after(1000, lambda: self.status_label.configure(text="Checking Docker Engine Status..."))
         try:
-            subprocess.run(["docker", "info"], check=True, capture_output=True)
+            subprocess.run(["docker", "info"], check=True, capture_output=True, creationflags=CREATE_NO_WINDOW)
             self.after(1800, lambda: self.status_label.configure(text="Verifying network adapters..."))
             self.after(3000, self.show_ready)
         except Exception:
@@ -205,40 +213,40 @@ class ProAgent(ctk.CTk):
         self.install_btn.pack(side="right")
 
     def start_tunnel(self):
-        global HOST_MAX_RAM, HOST_MAX_CPU, HOST_ALLOW_GPU
+        global HOST_MAX_RAM, HOST_MAX_CPU, HOST_ALLOW_GPU, PASSKEY
         HOST_MAX_RAM = self.ram_var.get()
         HOST_MAX_CPU = self.cpu_var.get()
         HOST_ALLOW_GPU = self.gpu_var.get()
+        PASSKEY = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
         
         self.install_btn.configure(state="disabled", text="Connecting...")
-        threading.Thread(target=self.run_backend, daemon=True).start()
+        threading.Thread(target=self.run_ssh_tunnel, daemon=True).start()
 
-    def run_backend(self):
+    def run_ssh_tunnel(self):
         try:
-            cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8000", "nokey@localhost.run"]
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, startupinfo=startupinfo)
+            cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8000", "nokey@localhost.run"]
+            self.ssh_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=CREATE_NO_WINDOW)
             
-            log_output = ""
-            for line in iter(process.stdout.readline, ''):
-                log_output += line
+            for line in iter(self.ssh_process.stdout.readline, ''):
                 match = re.search(r'(https://[a-zA-Z0-9.-]+\.lhr\.(life|net))', line)
                 if match:
                     url = match.group(1)
                     code = base64.b64encode(f"{url}|{PASSKEY}".encode()).decode()
                     self.after(0, lambda: self.show_final(code))
-                    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+                    self.monitor_tunnel()
                     return
-            err = log_output.strip()[-150:] if log_output.strip() else "Connection closed unexpectedly."
-            raise Exception(err)
+            raise Exception("Failed to acquire relay URL.")
         except Exception as e:
             self.after(0, lambda: self.show_tunnel_error(str(e)))
 
+    def monitor_tunnel(self):
+        self.ssh_process.wait()
+        self.after(0, lambda: self.show_tunnel_error("Connection to relay server dropped. Please generate a new key."))
+
     def show_tunnel_error(self, err_msg="Unknown"):
         self.clear_frame()
-        ctk.CTkLabel(self.main_frame, text="Tunneling Error", font=("Helvetica", 24, "bold"), text_color="#ef4444").pack(pady=(0, 10))
-        ctk.CTkLabel(self.main_frame, text="Failed to negotiate connection with the remote relay server.", justify="center").pack(pady=5)
+        ctk.CTkLabel(self.main_frame, text="Tunnel Disconnected", font=("Helvetica", 24, "bold"), text_color="#ef4444").pack(pady=(0, 10))
+        ctk.CTkLabel(self.main_frame, text="The secure link to the relay network was lost.", justify="center").pack(pady=5)
         
         err_box = ctk.CTkTextbox(self.main_frame, height=80, width=450, fg_color="#2b2b2b", text_color="#f87171")
         err_box.pack(pady=10)
@@ -248,7 +256,7 @@ class ProAgent(ctk.CTk):
         btn_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         btn_frame.pack(side="bottom", fill="x")
         ctk.CTkButton(btn_frame, text="Quit", fg_color="transparent", border_width=1, command=self.on_closing, width=100).pack(side="left")
-        ctk.CTkButton(btn_frame, text="Retry", command=self.start_tunnel, width=100).pack(side="right")
+        ctk.CTkButton(btn_frame, text="Generate New Key", command=self.show_ready, width=140).pack(side="right")
 
     def show_final(self, code):
         self.clear_frame()
@@ -272,6 +280,10 @@ class ProAgent(ctk.CTk):
 
     def on_closing(self):
         if messagebox.askokcancel("Exit Setup", "Are you sure you want to abort the node setup?"):
+            if self.ssh_process:
+                try:
+                    self.ssh_process.terminate()
+                except: pass
             self.destroy()
             os._exit(0)
 
