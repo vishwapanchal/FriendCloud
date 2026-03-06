@@ -136,7 +136,7 @@ async def terminate(req: TaskReq):
     subprocess.run(["docker", "rm", "-f", f"fc-{req.instance_id}"], capture_output=True, creationflags=CREATE_NO_WINDOW)
     return {"message": "Destroyed."}
 
-def start_api_server(): uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+def start_api_server(): uvicorn.run(app, host="127.0.0.1", port=8080, log_level="error")
 threading.Thread(target=start_api_server, daemon=True).start()
 
 # --- DESKTOP UI ---
@@ -276,9 +276,9 @@ class ProAgent(ctk.CTk):
 
     def run_ssh_tunnel(self):
         relays = [
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8000", "nokey@localhost.run"],
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8000", "serveo.net"],
-            ["ssh", "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "0:localhost:8000", "a.pinggy.io"]
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8080", "nokey@localhost.run"],
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8080", "serveo.net"],
+            ["ssh", "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "0:localhost:8080", "a.pinggy.io"]
         ]
         last_error = ""
         for cmd in relays:

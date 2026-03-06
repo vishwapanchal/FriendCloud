@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pydantic
+customtkinter
+Pillow
+pystray
+PyJWT
+python-dotenv
+fastapi-sso
+psutil
+pyngrok
+websockets

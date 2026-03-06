@@ -32,14 +32,14 @@ ALLOWED_EMAILS = [email.strip() for email in os.getenv("ALLOWED_EMAILS", "").spl
 google_sso = GoogleSSO(
     client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
     client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
-    redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback"),
+    redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/auth/google/callback"),
     allow_insecure_http=True
 )
 
 microsoft_sso = MicrosoftSSO(
     client_id=os.getenv("MICROSOFT_CLIENT_ID", ""),
     client_secret=os.getenv("MICROSOFT_CLIENT_SECRET", ""),
-    redirect_uri=os.getenv("MICROSOFT_REDIRECT_URI", "http://localhost:8000/auth/microsoft/callback"),
+    redirect_uri=os.getenv("MICROSOFT_REDIRECT_URI", "http://localhost:8080/auth/microsoft/callback"),
     allow_insecure_http=True
 )
 

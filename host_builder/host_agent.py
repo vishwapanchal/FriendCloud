@@ -70,7 +70,7 @@ if __name__ == "__main__":
         ngrok.set_auth_token(ngrok_token)
 
     # Start Ngrok
-    tunnel = ngrok.connect(8000)
+    tunnel = ngrok.connect(8080)
     public_url = tunnel.public_url
 
     # Generate Secret Code
@@ -86,4 +86,4 @@ if __name__ == "__main__":
     print("------------------------------------------------------------\n")
     print("Leave this window open. Close it to shut down your node.\n")
 
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="error")
