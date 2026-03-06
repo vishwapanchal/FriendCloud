@@ -1,0 +1,25 @@
+
+> frontend@0.0.0 build
+> vite build
+
+[36mvite v7.3.1 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32mΓ£ô[39m 20 modules transformed.
+Γ£ù Build failed in 509ms
+error during build:
+src/utils/constants.js (5:47): Expression expected
+file: C:/Users/vishw/Desktop/FriendCloud/frontend/src/utils/constants.js:5:47
+
+3: 
+4: export const TEMPLATES = [
+5:     { id: 'ubuntu', name: 'Ubuntu Core', icon: <BoxSvg />, image: 'ubuntu:latest' },
+                                                  ^
+6:     { id: 'python', name: 'Python 3.11', icon: <CodeSvg />, image: 'python:3.11-slim' },
+7:     { id: 'node', name: 'Node.js 20', icon: <ZapSvg />, image: 'node:20-alpine' },
+
+    at getRollupError (file:///C:/Users/vishw/Desktop/FriendCloud/frontend/node_modules/rollup/dist/es/shared/parseAst.js:402:41)
+    at ParseError.initialise (file:///C:/Users/vishw/Desktop/FriendCloud/frontend/node_modules/rollup/dist/es/shared/node-entry.js:14465:28)
+    at convertNode (file:///C:/Users/vishw/Desktop/FriendCloud/frontend/node_modules/rollup/dist/es/shared/node-entry.js:16437:10)
+    at convertProgram (file:///C:/Users/vishw/Desktop/FriendCloud/frontend/node_modules/rollup/dist/es/shared/node-entry.js:15677:12)
+    at Module.setSource (file:///C:/Users/vishw/Desktop/FriendCloud/frontend/node_modules/rollup/dist/es/shared/node-entry.js:17392:24)
+    at async ModuleLoader.addModuleSource (file:///C:/Users/vishw/Desktop/FriendCloud/frontend/node_modules/rollup/dist/es/shared/node-entry.js:21497:13)

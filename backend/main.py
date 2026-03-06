@@ -72,7 +72,8 @@ async def google_callback(request: Request):
     payload = {"sub": user.email, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     
-    return RedirectResponse(url=f"/?token={token}&email={user.email}")
+    frontend_url = os.getenv("FRONTEND_URL", "")
+    return RedirectResponse(url=f"{frontend_url}/?token={token}&email={user.email}")
 
 @app.get("/auth/microsoft/login")
 async def microsoft_login():
@@ -86,7 +87,8 @@ async def microsoft_callback(request: Request):
     payload = {"sub": user.email, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     
-    return RedirectResponse(url=f"/?token={token}&email={user.email}")
+    frontend_url = os.getenv("FRONTEND_URL", "")
+    return RedirectResponse(url=f"{frontend_url}/?token={token}&email={user.email}")
 
 class LaunchRequest(BaseModel):
     image: str = "ubuntu"
@@ -200,8 +202,14 @@ frontend_dist = os.path.join(os.path.dirname(__file__), "../frontend/dist")
 
 if os.path.exists(frontend_dist):
     app.mount("/assets", StaticFiles(directory=f"{frontend_dist}/assets"), name="assets")
+    
+    # Catch-all route for the SPA, but exclude actual API routes
     @app.get("/{catchall:path}")
-    async def serve_frontend(catchall: str):
+    async def serve_frontend(request: Request, catchall: str):
+        # Allow actual API requests to fall through or return 404s properly
+        if catchall.startswith("auth/") or catchall.startswith("sysinfo") or catchall.startswith("launch") or catchall.startswith("execute") or catchall.startswith("terminate") or catchall.startswith("download-agent"):
+             raise HTTPException(status_code=404, detail="Not Found")
+             
         requested_file = os.path.join(frontend_dist, catchall)
         if os.path.isfile(requested_file):
             return FileResponse(requested_file)
