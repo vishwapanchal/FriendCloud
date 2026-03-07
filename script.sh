@@ -955,8 +955,7 @@ function App() {
   const [isConnecting, setIsConnecting] = useState(false);
 
   const API_HEADERS = {
-    'Content-Type': 'application/json',
-    'ngrok-skip-browser-warning': 'true'
+    'Content-Type': 'application/json'
   };
 
   useEffect(() => {

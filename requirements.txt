@@ -8,5 +8,8 @@ PyJWT
 python-dotenv
 fastapi-sso
 psutil
-pyngrok
 websockets
+
+motor
+passlib[bcrypt]
+python-multipart

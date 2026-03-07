@@ -1,4 +1,10 @@
-import os, base64, random, string, subprocess, threading, re, platform, webbrowser, ctypes, time, shutil
+import os, base64, random, string, subprocess, threading, re, platform, webbrowser, ctypes, time, shutil, sys
+
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 import customtkinter as ctk
 from tkinter import messagebox
 import uvicorn
@@ -25,6 +31,8 @@ def get_free_storage():
     try: return max(1, int(shutil.disk_usage(os.path.abspath(os.sep)).free / (1024**3)))
     except Exception: return 20 
 
+CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
+
 def find_docker():
     """Dynamically locate docker.exe without hardcoding paths."""
     try:
@@ -43,8 +51,6 @@ def find_docker():
 TOTAL_RAM_GB = get_total_ram()
 TOTAL_CORES = os.cpu_count() or 2
 TOTAL_STORAGE_GB = get_free_storage()
-
-CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
 PASSKEY = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
 
 HOST_MAX_RAM = max(0.5, float(TOTAL_RAM_GB // 2))
@@ -117,9 +123,9 @@ async def websocket_endpoint(websocket: WebSocket, instance_id: str, passkey: st
         await websocket.close(code=1008)
         return
         
-    # Start an interactive shell process (-i keeps STDIN open, sh -i forces interactive prompts)
+    # Start an interactive shell process (-i keeps STDIN open, -t allocates a pseudo-TTY, sh forces interactive prompts)
     proc = await asyncio.create_subprocess_exec(
-        "docker", "exec", "-i", f"fc-{instance_id}", "sh", "-i",
+        "docker", "exec", "-i", "-t", f"fc-{instance_id}", "sh",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
@@ -144,8 +150,8 @@ async def websocket_endpoint(websocket: WebSocket, instance_id: str, passkey: st
                 data = await proc.stdout.read(1024)
                 if not data: break
                 
-                # Format line breaks for Xterm.js (\n -> \r\n)
-                decoded = data.decode('utf-8', errors='replace').replace('\n', '\r\n')
+                # Format line breaks for Xterm.js (\n -> \r\n), avoiding double \r\r\n
+                decoded = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\n', '\r\n')
                 await websocket.send_text(decoded)
         except Exception: pass
 
@@ -160,6 +166,12 @@ async def terminate(req: TaskReq):
 def start_api_server(): uvicorn.run(app, host="127.0.0.1", port=8123, log_level="error")
 threading.Thread(target=start_api_server, daemon=True).start()
 
+def get_cloudflared_path():
+    """Get the path to the bundled cloudflared executable."""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, 'bin', 'cloudflared.exe')
+    return os.path.join(os.path.dirname(__file__), 'bin', 'cloudflared.exe')
+
 # --- DESKTOP UI ---
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -171,7 +183,7 @@ class ProAgent(ctk.CTk):
         self.geometry("600x550")
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.ssh_process = None
+        self.tunnel_process = None
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.pack(fill="both", expand=True, padx=40, pady=40)
         self.show_welcome()
@@ -203,37 +215,11 @@ class ProAgent(ctk.CTk):
 
     def run_checks(self):
         try:
-            self.after(0, lambda: self.status_label.configure(text="Checking for OpenSSH Client..."))
-            subprocess.run(["ssh", "-V"], check=True, capture_output=True, creationflags=CREATE_NO_WINDOW)
-        except Exception:
-            self.after(0, self.ask_install_ssh)
-            return
-
-        try:
-            self.after(500, lambda: self.status_label.configure(text="Checking Docker Engine Status..."))
+            self.after(0, lambda: self.status_label.configure(text="Checking Docker Engine Status..."))
             subprocess.run(["docker", "info"], check=True, capture_output=True, creationflags=CREATE_NO_WINDOW)
             self.after(1000, self.show_ready)
         except Exception:
             self.after(0, self.show_docker_error)
-
-    def ask_install_ssh(self):
-        self.progress.stop()
-        if messagebox.askyesno("Dependency Missing", "OpenSSH Client is required but not found.\n\nWould you like to install and enable it automatically? (Requires Admin)"):
-            self.status_label.configure(text="Installing OpenSSH... Please wait.")
-            self.progress.start()
-            threading.Thread(target=self.install_ssh_admin, daemon=True).start()
-        else:
-            self.show_welcome()
-
-    def install_ssh_admin(self):
-        ps_cmd = "Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0"
-        try:
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f"-Command {ps_cmd}", None, 1)
-            time.sleep(15)
-            self.after(0, self.run_checks)
-        except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Install Failed", f"Could not install OpenSSH: {e}"))
-            self.after(0, self.show_welcome)
 
     def show_docker_error(self):
         self.clear_frame()
@@ -293,32 +279,38 @@ class ProAgent(ctk.CTk):
         PASSKEY = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
         
         self.install_btn.configure(state="disabled", text="Connecting...")
-        threading.Thread(target=self.run_ssh_tunnel, daemon=True).start()
+        threading.Thread(target=self.run_cloudflare_tunnel, daemon=True).start()
 
-    def run_ssh_tunnel(self):
-        relays = [
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8123", "nokey@localhost.run"],
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8123", "serveo.net"],
-            ["ssh", "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "0:localhost:8123", "a.pinggy.io"]
-        ]
+    def run_cloudflare_tunnel(self):
+        cf_path = get_cloudflared_path()
+        if not os.path.exists(cf_path):
+            self.after(0, lambda: self.show_tunnel_error(f"Missing binary:\n{cf_path}"))
+            return
+
+        cmd = [cf_path, "tunnel", "--url", "http://localhost:8123"]
         last_error = ""
-        for cmd in relays:
-            try:
-                self.ssh_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=CREATE_NO_WINDOW)
-                output_log = []
-                for line in iter(self.ssh_process.stdout.readline, ''):
-                    output_log.append(line.strip())
-                    match = re.search(r'(https://[a-zA-Z0-9.-]+\.(?:lhr\.life|lhr\.net|serveo\.net|pinggy\.link|pinggy\.online))', line)
-                    if match:
-                        code = base64.b64encode(f"{match.group(1)}|{PASSKEY}".encode()).decode()
-                        self.after(0, lambda c=code: self.show_final(c))
-                        self.ssh_process.wait()
-                        self.after(0, lambda: self.show_tunnel_error("Connection dropped."))
-                        return
-                    if self.ssh_process.poll() is not None: break
-                if output_log: last_error = "\n".join(output_log[-3:])
-            except Exception as e: last_error = str(e)
-        self.after(0, lambda: self.show_tunnel_error(f"Relay Failed.\n{last_error}"))
+        
+        try:
+            self.tunnel_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=CREATE_NO_WINDOW)
+            output_log = []
+            
+            for line in iter(self.tunnel_process.stdout.readline, ''):
+                output_log.append(line.strip())
+                # match cloudflare's trycloudflare.com URL
+                match = re.search(r'(https://[a-zA-Z0-9\-]+\.trycloudflare\.com)', line)
+                if match:
+                    code = base64.b64encode(f"{match.group(1)}|{PASSKEY}".encode()).decode()
+                    self.after(0, lambda c=code: self.show_final(c))
+                    # keep reading so the buffer doesn't fill up
+                    for _ in iter(self.tunnel_process.stdout.readline, ''): pass
+                    return
+                if self.tunnel_process.poll() is not None: break
+                
+            if output_log: last_error = "\n".join(output_log[-3:])
+        except Exception as e: 
+            last_error = str(e)
+            
+        self.after(0, lambda: self.show_tunnel_error(f"Tunnel Initialization Failed.\n{last_error}"))
 
     def show_tunnel_error(self, err_msg="Unknown"):
         self.clear_frame()
@@ -343,8 +335,8 @@ class ProAgent(ctk.CTk):
 
     def on_closing(self):
         if messagebox.askokcancel("Exit", "Terminate node session?"):
-            if self.ssh_process: 
-                try: self.ssh_process.terminate()
+            if self.tunnel_process: 
+                try: self.tunnel_process.terminate()
                 except: pass
             self.destroy(); os._exit(0)
 

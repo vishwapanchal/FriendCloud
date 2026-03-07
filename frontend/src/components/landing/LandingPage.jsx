@@ -1,7 +1,7 @@
 import React from 'react';
-import { GoogleIcon, ShieldIcon, LinkIcon, CpuIcon } from '../common/Icons';
+import { ShieldIcon, LinkIcon, CpuIcon } from '../common/Icons';
 
-const LandingPage = () => {
+const LandingPage = ({ onAuthClick }) => {
     return (
         <main className="main-content">
             <section className="hero-section">
@@ -15,9 +15,9 @@ const LandingPage = () => {
                 <button
                     className="btn btn-primary"
                     style={{ padding: '16px 36px', fontSize: '1.1rem', borderRadius: '16px', animation: 'slideUpFade 1.4s ease-out' }}
-                    onClick={() => window.location.href = '/auth/google/login'}
+                    onClick={onAuthClick}
                 >
-                    <GoogleIcon /> Enter the Network
+                    Enter the Network
                 </button>
             </section>
 

@@ -4,11 +4,12 @@ import random
 import string
 import subprocess
 import threading
+import time
+import re
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pyngrok import ngrok, conf
 
 # Generate a random passkey for this session
 PASSKEY = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
@@ -52,6 +53,34 @@ async def terminate_instance(req: TaskReq):
     subprocess.run(["docker", "rm", "-f", f"fc-{req.instance_id}"], capture_output=True)
     return {"message": "Destroyed."}
 
+def start_cloudflare_tunnel(port=8000, timeout=30):
+    """Start a Cloudflare quick tunnel and return the public URL."""
+    proc = subprocess.Popen(
+        ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    # cloudflared outputs the tunnel URL to stderr
+    url = None
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        line = proc.stderr.readline()
+        if not line:
+            break
+        # Look for the trycloudflare.com URL
+        match = re.search(r'(https://[a-zA-Z0-9\-]+\.trycloudflare\.com)', line)
+        if match:
+            url = match.group(1)
+            break
+
+    if url is None:
+        proc.terminate()
+        raise RuntimeError("Failed to start Cloudflare tunnel. Make sure 'cloudflared' is installed.")
+
+    return url, proc
+
 if __name__ == "__main__":
     print("="*60)
     print("   ☁️  FriendCloud Host Agent")
@@ -64,14 +93,22 @@ if __name__ == "__main__":
         input("Press Enter to exit...")
         exit(1)
 
-    print("2. Starting Secure Tunnel...")
-    ngrok_token = input("\nEnter your Ngrok Authtoken (get it from dashboard.ngrok.com): ").strip()
-    if ngrok_token:
-        ngrok.set_auth_token(ngrok_token)
+    print("2. Checking Cloudflared...")
+    try:
+        subprocess.run(["cloudflared", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        print("[ERROR] 'cloudflared' is not installed!")
+        print("        Download it from: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+        input("Press Enter to exit...")
+        exit(1)
 
-    # Start Ngrok
-    tunnel = ngrok.connect(8080)
-    public_url = tunnel.public_url
+    print("3. Starting Secure Tunnel (Cloudflare)...")
+    try:
+        public_url, tunnel_proc = start_cloudflare_tunnel(8000)
+    except RuntimeError as e:
+        print(f"[ERROR] {e}")
+        input("Press Enter to exit...")
+        exit(1)
 
     # Generate Secret Code
     raw_secret = f"{public_url}|{PASSKEY}"
@@ -86,4 +123,7 @@ if __name__ == "__main__":
     print("------------------------------------------------------------\n")
     print("Leave this window open. Close it to shut down your node.\n")
 
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="error")
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+    finally:
+        tunnel_proc.terminate()

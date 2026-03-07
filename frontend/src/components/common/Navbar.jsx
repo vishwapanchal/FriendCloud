@@ -1,8 +1,8 @@
 import React from 'react';
-import { CloudIcon, SunIcon, MoonIcon, GoogleIcon } from './Icons';
+import { CloudIcon, SunIcon, MoonIcon } from './Icons';
 import { APP_MODES } from '../../utils/constants';
 
-const Navbar = ({ token, userEmail, theme, toggleTheme, setAppMode }) => {
+const Navbar = ({ token, userEmail, theme, toggleTheme, setAppMode, onAuthClick }) => {
     return (
         <header className="nav-header">
             <div
@@ -23,7 +23,7 @@ const Navbar = ({ token, userEmail, theme, toggleTheme, setAppMode }) => {
                         <button className="theme-toggle" onClick={toggleTheme}>
                             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
                         </button>
-                        <button className="btn btn-secondary" onClick={() => window.location.href = '/auth/google/login'}>
+                        <button className="btn btn-secondary" onClick={onAuthClick}>
                             Sign In
                         </button>
                     </div>

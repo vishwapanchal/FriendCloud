@@ -13,6 +13,7 @@ import HostNodeSetup from './components/dashboard/HostNodeSetup';
 import UplinkConnect from './components/dashboard/UplinkConnect';
 import Orchestrator from './components/dashboard/Orchestrator';
 import DedicatedTerminal from './components/dashboard/DedicatedTerminal';
+import AuthModal from './components/auth/AuthModal';
 
 // Utils
 import { APP_MODES } from './utils/constants';
@@ -27,6 +28,9 @@ function App() {
   const [appMode, setAppMode] = useState(APP_MODES.SELECT); // select | host | rent | dashboard
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDedicatedTerminal, setIsDedicatedTerminal] = useState(false);
+
+  // Authentication Flow
+  const [showAuth, setShowAuth] = useState(false);
 
   // Connection Details
   const [secretCode, setSecretCode] = useState('');
@@ -63,16 +67,13 @@ function App() {
       setIsDedicatedTerminal(true);
       return;
     }
-    const urlToken = params.get("token");
-    const urlEmail = params.get("email");
-    if (urlToken && urlEmail) {
-      localStorage.setItem("token", urlToken);
-      localStorage.setItem("email", urlEmail);
-      setToken(urlToken);
-      setUserEmail(urlEmail);
-      window.history.replaceState({}, document.title, "/");
-    }
   }, []);
+
+  const handleAuthSuccess = (newToken, newEmail) => {
+    setToken(newToken);
+    setUserEmail(newEmail);
+    setShowAuth(false);
+  };
 
   // Window Resize handler for Xterm
   useEffect(() => {
@@ -254,8 +255,9 @@ function App() {
     return (
       <div className="page-layout">
         <Background />
-        <Navbar token={token} userEmail={userEmail} theme={theme} toggleTheme={toggleTheme} setAppMode={setAppMode} />
-        <LandingPage />
+        <Navbar token={token} userEmail={userEmail} theme={theme} toggleTheme={toggleTheme} setAppMode={setAppMode} onAuthClick={() => setShowAuth(true)} />
+        <LandingPage onAuthClick={() => setShowAuth(true)} />
+        {showAuth && <AuthModal onClose={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />}
       </div>
     );
   }
@@ -300,7 +302,6 @@ function App() {
             maxStorage={maxStorage}
             handleLaunch={handleLaunch}
             handleTerminate={handleTerminate}
-            terminalRef={terminalRef}
           />
         )}
       </main>

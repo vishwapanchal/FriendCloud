@@ -8,11 +8,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 
-from fastapi_sso.sso.google import GoogleSSO
-from fastapi_sso.sso.microsoft import MicrosoftSSO
+from motor.motor_asyncio import AsyncIOMotorClient
+import bcrypt
 
 load_dotenv()
 
@@ -27,97 +27,89 @@ app.add_middleware(
 )
 
 JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-friendcloud-key")
-ALLOWED_EMAILS = [email.strip() for email in os.getenv("ALLOWED_EMAILS", "").split(",")]
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 
-google_sso = GoogleSSO(
-    client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
-    client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
-    redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/auth/google/callback"),
-    allow_insecure_http=True
-)
+# MongoDB Setup
+client = AsyncIOMotorClient(MONGODB_URL)
+db = client.friendcloud
+users_collection = db.get_collection("users")
 
-microsoft_sso = MicrosoftSSO(
-    client_id=os.getenv("MICROSOFT_CLIENT_ID", ""),
-    client_secret=os.getenv("MICROSOFT_CLIENT_SECRET", ""),
-    redirect_uri=os.getenv("MICROSOFT_REDIRECT_URI", "http://localhost:8080/auth/microsoft/callback"),
-    allow_insecure_http=True
-)
+# Password Hashing
+def verify_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def get_password_hash(password):
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 def verify_token_and_get_email(token: Optional[str]):
     if not token:
-        return "local_testing_bypass"
+        raise HTTPException(status_code=401, detail="Missing authentication token.")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         return payload["sub"]
     except Exception:
         raise HTTPException(status_code=401, detail="Session expired or invalid. Please log in again.")
 
-def authorize_user(email: str):
-    if email == "local_testing_bypass":
-        return
-    if "*" in ALLOWED_EMAILS:
-        return
-    if email not in ALLOWED_EMAILS:
-        raise HTTPException(status_code=403, detail=f"Access Denied: The email {email} is not whitelisted by the host.")
+async def authorize_user(email: str):
+    user = await users_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=403, detail=f"Access Denied: Record not found.")
+    return user
 
-@app.get("/auth/google/login")
-async def google_login():
-    return await google_sso.get_login_redirect()
+class UserSignup(BaseModel):
+    email: EmailStr
+    password: str
 
-@app.get("/auth/google/callback")
-async def google_callback(request: Request):
-    user = await google_sso.verify_and_process(request)
-    authorize_user(user.email)
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+@app.post("/auth/signup")
+async def signup(user: UserSignup):
+    existing_user = await users_collection.find_one({"email": user.email})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
     
-    payload = {"sub": user.email, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
+    hashed_password = get_password_hash(user.password)
+    new_user = {"email": user.email, "hashed_password": hashed_password}
+    await users_collection.insert_one(new_user)
+    
+    return {"message": "User created successfully"}
+
+@app.post("/auth/login")
+async def login(user: UserLogin):
+    db_user = await users_collection.find_one({"email": user.email})
+    if not db_user or not verify_password(user.password, db_user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    payload = {"sub": user.email, "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)}
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     
-    frontend_url = os.getenv("FRONTEND_URL", "")
-    return RedirectResponse(url=f"{frontend_url}/?token={token}&email={user.email}")
-
-@app.get("/auth/microsoft/login")
-async def microsoft_login():
-    return await microsoft_sso.get_login_redirect()
-
-@app.get("/auth/microsoft/callback")
-async def microsoft_callback(request: Request):
-    user = await microsoft_sso.verify_and_process(request)
-    authorize_user(user.email)
-    
-    payload = {"sub": user.email, "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7)}
-    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-    
-    frontend_url = os.getenv("FRONTEND_URL", "")
-    return RedirectResponse(url=f"{frontend_url}/?token={token}&email={user.email}")
+    return {"token": token, "email": user.email}
 
 class LaunchRequest(BaseModel):
     image: str = "ubuntu"
     ram: str = "512m"
     cpu: str = "1"
-    token: Optional[str] = None
     passkey: Optional[str] = None
     instance_id: str
 
 class ExecuteRequest(BaseModel):
     command: Optional[str] = ""
     image: str = "ubuntu"
-    token: Optional[str] = None
     passkey: Optional[str] = None
     instance_id: str
 
 class TerminateRequest(BaseModel):
-    token: Optional[str] = None
     passkey: Optional[str] = None
     instance_id: str
 
 class AuthReq(BaseModel):
     passkey: Optional[str] = None
-    token: Optional[str] = None
 
 @app.post("/launch")
 async def launch_instance(request: LaunchRequest):
-    email = verify_token_and_get_email(request.token)
-    authorize_user(email)
 
     container_name = f"fc-{request.instance_id}"
     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
@@ -137,8 +129,6 @@ async def launch_instance(request: LaunchRequest):
 
 @app.post("/execute")
 async def execute_task(request: ExecuteRequest):
-    email = verify_token_and_get_email(request.token)
-    authorize_user(email)
 
     container_name = f"fc-{request.instance_id}"
 
@@ -184,8 +174,6 @@ async def get_sysinfo(req: Optional[AuthReq] = None):
 
 @app.post("/terminate")
 async def terminate_instance(request: TerminateRequest):
-    email = verify_token_and_get_email(request.token)
-    authorize_user(email)
 
     container_name = f"fc-{request.instance_id}"
     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)

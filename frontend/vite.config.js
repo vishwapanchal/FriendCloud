@@ -6,12 +6,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/auth': 'http://localhost:8080',
-      '/sysinfo': 'http://localhost:8080',
-      '/launch': 'http://localhost:8080',
-      '/execute': 'http://localhost:8080',
-      '/terminate': 'http://localhost:8080',
-      '/download-agent': 'http://localhost:8080'
+      '/auth': 'http://localhost:8000',
+      '/sysinfo': 'http://localhost:8000',
+      '/launch': 'http://localhost:8000',
+      '/execute': 'http://localhost:8000',
+      '/terminate': 'http://localhost:8000',
+      '/download-agent': 'http://localhost:8000'
     }
   }
 })
