@@ -86,7 +86,7 @@ const Orchestrator = ({
                         <div className="input-group">
                             <label className="input-label">
                                 <span>Memory Allocation:</span>
-                                <span style={{ color: 'var(--neon-cyan)' }}>{ram < 1 ? '512 MB' : `${ram} GB`} {`(Max: ${maxRam} GB)`}</span>
+                                <span style={{ color: 'var(--neon-cyan)' }}>{ram < 1 ? '512 MB' : `${ram} GB`} {`(Owner Limit: ${maxRam} GB)`}</span>
                             </label>
                             <input
                                 type="range"
@@ -103,7 +103,7 @@ const Orchestrator = ({
                         <div className="input-group">
                             <label className="input-label">
                                 <span>vCPU Cores:</span>
-                                <span style={{ color: 'var(--neon-cyan)' }}>{cpu} Core{cpu > 1 ? 's' : ''} {`(Max: ${maxCpu})`}</span>
+                                <span style={{ color: 'var(--neon-cyan)' }}>{cpu} Core{cpu > 1 ? 's' : ''} {`(Owner Limit: ${maxCpu})`}</span>
                             </label>
                             <input
                                 type="range"
@@ -120,7 +120,7 @@ const Orchestrator = ({
                         <div className="input-group">
                             <label className="input-label">
                                 <span>Storage Volume:</span>
-                                <span style={{ color: 'var(--neon-cyan)' }}>{storage} GB {`(Max: ${maxStorage} GB)`}</span>
+                                <span style={{ color: 'var(--neon-cyan)' }}>{storage} GB {`(Owner Limit: ${maxStorage} GB)`}</span>
                             </label>
                             <input
                                 type="range"

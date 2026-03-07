@@ -192,7 +192,7 @@ function App() {
 
       // Establish PTY WebSocket Tunnel
       const wsUrl = decodedHost.replace(/^http/, 'ws');
-      const ws = new WebSocket(`${wsUrl}/pty?instance_id=demo&passkey=${encodeURIComponent(passkey)}`);
+      const ws = new WebSocket(`${wsUrl}/ws/demo?passkey=${encodeURIComponent(passkey)}`);
 
       ws.onopen = () => {
         if (term) term.writeln('\x1b[1;36m[SYS]\x1b[0m Secure PTY Link Established.');
@@ -211,9 +211,11 @@ function App() {
         setStatus('Offline');
       };
 
-      term.onData(data => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data);
-      });
+      if (term) {
+        term.onData(data => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(data);
+        });
+      }
 
       wsRef.current = ws;
     } catch (e) {
