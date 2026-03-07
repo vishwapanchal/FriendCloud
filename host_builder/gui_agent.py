@@ -25,6 +25,21 @@ def get_free_storage():
     try: return max(1, int(shutil.disk_usage(os.path.abspath(os.sep)).free / (1024**3)))
     except Exception: return 20 
 
+def find_docker():
+    """Dynamically locate docker.exe without hardcoding paths."""
+    try:
+        result = subprocess.run(
+            ["docker", "--version"],
+            capture_output=True,
+            text=True,
+            creationflags=CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "Docker not found"
+
 TOTAL_RAM_GB = get_total_ram()
 TOTAL_CORES = os.cpu_count() or 2
 TOTAL_STORAGE_GB = get_free_storage()
@@ -38,23 +53,29 @@ HOST_MAX_STORAGE = min(20, TOTAL_STORAGE_GB)
 HOST_ALLOW_GPU = False
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 class AuthReq(BaseModel): passkey: str
 class TaskReq(BaseModel):
-    image: str = "ubuntu"; ram: str = "512m"; cpu: str = "1"; storage: str = "5g"
-    use_gpu: bool = False; passkey: str; instance_id: str
+    image: str = "ubuntu"
+    ram: str = "512m"
+    cpu: str = "1"
+    storage: str = "5g"
+    use_gpu: bool = False
+    passkey: str
+    instance_id: str
+
 
 @app.post("/sysinfo")
 async def get_sysinfo(req: AuthReq):
     if req.passkey != PASSKEY: raise HTTPException(status_code=401)
-    try: dkr = subprocess.run(["docker", "--version"], capture_output=True, text=True, creationflags=CREATE_NO_WINDOW).stdout.strip()
-    except: dkr = "N/A"
+    dkr = find_docker()
     try:
         gpu_info = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, check=True, creationflags=CREATE_NO_WINDOW).stdout.strip()
         has_gpu = True
     except: gpu_info, has_gpu = "None", False
     
+    # Return current user-configured limits, not system maximums
     return {
         "os": f"{platform.system()} {platform.release()}", "cpu_name": platform.processor() or platform.machine(),
         "gpu_name": gpu_info, "has_gpu": has_gpu, "allowed_gpu": HOST_ALLOW_GPU, "cores": TOTAL_CORES,
@@ -136,7 +157,7 @@ async def terminate(req: TaskReq):
     subprocess.run(["docker", "rm", "-f", f"fc-{req.instance_id}"], capture_output=True, creationflags=CREATE_NO_WINDOW)
     return {"message": "Destroyed."}
 
-def start_api_server(): uvicorn.run(app, host="127.0.0.1", port=8080, log_level="error")
+def start_api_server(): uvicorn.run(app, host="127.0.0.1", port=8123, log_level="error")
 threading.Thread(target=start_api_server, daemon=True).start()
 
 # --- DESKTOP UI ---
@@ -276,9 +297,9 @@ class ProAgent(ctk.CTk):
 
     def run_ssh_tunnel(self):
         relays = [
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8080", "nokey@localhost.run"],
-            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8080", "serveo.net"],
-            ["ssh", "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "0:localhost:8080", "a.pinggy.io"]
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8123", "nokey@localhost.run"],
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "80:127.0.0.1:8123", "serveo.net"],
+            ["ssh", "-p", "443", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-R", "0:localhost:8123", "a.pinggy.io"]
         ]
         last_error = ""
         for cmd in relays:

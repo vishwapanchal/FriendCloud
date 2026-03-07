@@ -57,7 +57,7 @@ const DedicatedTerminal = ({ theme }) => {
 
         // Websocket Instantiation
         const wsUrl = decodedHost.replace(/^http/, 'ws');
-        const ws = new WebSocket(`${wsUrl}/pty?instance_id=demo&passkey=${encodeURIComponent(passkey)}`);
+        const ws = new WebSocket(`${wsUrl}/ws/demo?passkey=${encodeURIComponent(passkey)}`);
 
         ws.onopen = () => {
             setStatus('Connected');
